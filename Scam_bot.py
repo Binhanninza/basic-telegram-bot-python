@@ -1,9 +1,10 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated, ChatMember
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, ChatMemberHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, ChatMemberHandler, JobQueue
 import logging
 import sqlite3
 import os
 import datetime
+import math # Thêm thư viện math để dùng cho việc chia nhỏ tin nhắn
 
 # --- CẤU HÌNH CỦA BẠN ---
 # NHỚ THAY THẾ "YOUR_BOT_TOKEN_HERE" BẰNG TOKEN BOT CỦA BẠN!
@@ -121,6 +122,22 @@ def get_scam_account_from_db(account_number: str) -> tuple[str | None, str | Non
     except sqlite3.Error as e:
         logger.error(f"Lỗi khi kiểm tra số tài khoản '{account_number}' trong DB: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
+
+# Hàm MỚI: Lấy tất cả số tài khoản lừa đảo
+def get_all_scam_accounts_from_db() -> list[tuple[str, str | None, str | None]]:
+    """Lấy tất cả số tài khoản lừa đảo cùng lý do và thời gian thêm từ database."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT account_number, reason, added_at FROM scam_accounts ORDER BY account_number")
+        return cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f"Lỗi khi lấy tất cả số tài khoản lừa đảo từ DB: {e}")
+        return []
     finally:
         if conn:
             conn.close()
@@ -339,7 +356,7 @@ async def report_scam_account(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # Gửi thông báo đến Admin
         admin_message_text = (
-            f"⚠️ **BÁO CÁO MỚI TỪ NGƯỜNG DÙNG** ⚠️\n\n"
+            f"⚠️ **BÁO CÁO MỚI TỪ NGƯỜI DÙNG** ⚠️\n\n"
             f"**Người báo cáo:** `{username}` (ID: `{user_id}`)\n"
             f"**Số tài khoản:** `{account_number}`\n"
             f"**Lý do:** `{reason}`\n"
@@ -513,7 +530,6 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             chat_member_count = "nhiều" # Fallback nếu không lấy được
 
         # Lấy thời gian tham gia nhóm (thời gian hiện tại bot nhận được event)
-        # Format lại theo múi giờ Việt Nam (GMT+7)
         join_time = datetime.datetime.now()
         formatted_join_time = join_time.strftime("%H:%M:%S %d-%m-%Y") # Ví dụ: 14:30:00 28-05-2025
 
@@ -522,7 +538,7 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             f"𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝗰𝗼𝗻 𝘃𝗸 {member_name} đ𝗮̃ đ𝗲̂́𝗻 👉🏻 𝘃𝗼̛́𝗶 𝗻𝗵𝗼́𝗺 𝗖𝗦𝗖𝗦𝟭\n"
             f"𝑭𝒓𝒊𝒆𝒏𝒅 𝒍𝗮̀ 𝒕𝒉𝒂̀𝒏𝒉 𝒗𝒊𝒆̂𝒏 𝒔𝒐̂́ {chat_member_count} của cộng đồng này. \n"
             f"𝚃ê𝚗: {member_name}\n"
-            f"𝚃𝚑ờ𝚒 𝚐𝚒𝚊𝚗 𝚝𝚑𝚊𝚖 𝚐𝚒𝗮: {formatted_join_time}\n"
+            f"𝚃𝚑ờ𝚒 𝚐𝚒𝚊𝚗 𝚝𝚑𝗮𝗺 𝚐𝗶𝗮: {formatted_join_time}\n"
             f"𝘾h𝒖́𝙘 𝙘𝙤𝙣 𝙫𝙠 𝙣h𝒂̆́𝙣 𝙩𝙞𝙣 𝙫𝙪𝙞 𝙫𝒆̉, 𝙣h𝒐̛́ 𝙩𝙪𝐚̂𝙣 /𝙧𝙪𝒍𝒆𝒔 𝙘𝒖̉𝗮 𝙣h𝒐́𝙢 𝙣h𝒆́!!!"
         )
 
@@ -533,7 +549,6 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception as e:
             logger.error(f"Không thể gửi tin nhắn chào mừng trong nhóm {update.effective_chat.id}: {e}")
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Hiển thị hướng dẫn sử dụng bot."""
     await update.message.reply_text(
@@ -542,7 +557,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• `/add {STK1} [STK2...] [Lý do]`: Thêm một hoặc nhiều số tài khoản lừa đảo vào dữ liệu. Lý do là tùy chọn và áp dụng cho tất cả STK trong lệnh.\n"
         "  Ví dụ: `/add 012345 Scam bán acc` hoặc `/add 987654 11223344`\n"
         "• `/delete {STK}`: Xóa số tài khoản lừa đảo ra khỏi dữ liệu.\n"
-        "  Ví dụ: `/delete 012345`\n\n"
+        "  Ví dụ: `/delete 012345`\n"
+        "• `/backup`: Gửi toàn bộ danh sách tài khoản lừa đảo.\n\n" # Thêm mô tả lệnh backup
         "**Lệnh của Người dùng:**\n"
         "• Gửi trực tiếp **số tài khoản** bạn muốn kiểm tra.\n"
         "• `/baocao {STK} {Lý do}`: Báo cáo một số tài khoản lừa đảo. **Lý do là bắt buộc.**\n"
@@ -551,33 +567,158 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         , parse_mode='Markdown' # Đảm bảo parse_mode là Markdown
     )
 
+# Hàm MỚI: Chia nhỏ tin nhắn nếu quá dài
+def chunk_message(text: str, max_length: int = 4096) -> list[str]:
+    """Chia một chuỗi văn bản thành các đoạn nhỏ hơn không vượt quá max_length."""
+    chunks = []
+    current_chunk = ""
+    # Tách theo dòng để tránh cắt ngang thông tin quan trọng
+    lines = text.split('\n') 
+    
+    for line in lines:
+        # Nếu thêm dòng này vào mà vượt quá max_length
+        if len(current_chunk) + len(line) + 1 > max_length and current_chunk: # +1 cho ký tự xuống dòng
+            chunks.append(current_chunk.strip())
+            current_chunk = line + '\n'
+        else:
+            current_chunk += line + '\n'
+            
+    if current_chunk: # Thêm phần còn lại nếu có
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
+# Hàm MỚI: Gửi backup dữ liệu scam
+async def send_scam_data_backup(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lấy dữ liệu scam và gửi tới chat_id được chỉ định, chia nhỏ nếu cần."""
+    scam_accounts = get_all_scam_accounts_from_db()
+
+    if not scam_accounts:
+        await context.bot.send_message(chat_id=chat_id, text="Không có tài khoản lừa đảo nào trong dữ liệu.")
+        logger.info(f"Sent empty scam data backup to {chat_id}")
+        return
+
+    # Sắp xếp theo thứ tự thêm vào (mới nhất trước) để dễ xem
+    # scam_accounts_sorted = sorted(scam_accounts, key=lambda x: x[2] if x[2] else '', reverse=True)
+    # Vì đã ORDER BY account_number trong get_all_scam_accounts_from_db nên không cần sắp xếp lại
+
+    header = "📊 **DANH SÁCH TÀI KHOẢN LỪA ĐẢO** 📊\n\n"
+    footer = f"\n\nTổng cộng: {len(scam_accounts)} tài khoản."
+    
+    all_data_lines = []
+    for account, reason, added_at_iso in scam_accounts:
+        added_info = ""
+        if added_at_iso:
+            try:
+                added_datetime = datetime.datetime.fromisoformat(added_at_iso)
+                added_info = f" (thêm: {added_datetime.strftime('%d-%m-%Y')})"
+            except (ValueError, TypeError):
+                added_info = f" (thêm: {added_at_iso})" # Fallback nếu lỗi format
+
+        if reason:
+            all_data_lines.append(f"• `{account}`: {reason}{added_info}")
+        else:
+            all_data_lines.append(f"• `{account}`{added_info}")
+
+    full_message_content = header + "\n".join(all_data_lines) + footer
+
+    # Chia nhỏ tin nhắn nếu vượt quá giới hạn Telegram (4096 ký tự)
+    message_chunks = chunk_message(full_message_content)
+
+    for i, chunk in enumerate(message_chunks):
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=chunk,
+                parse_mode='Markdown'
+            )
+            # Thêm độ trễ nhỏ giữa các tin nhắn nếu có nhiều chunk để tránh giới hạn rate
+            if len(message_chunks) > 1 and i < len(message_chunks) - 1:
+                await asyncio.sleep(0.5) # Để tránh FloodWait
+        except Exception as e:
+            logger.error(f"Không thể gửi chunk {i+1} của backup đến {chat_id}: {e}")
+            await context.bot.send_message(chat_id=chat_id, text=f"Lỗi khi gửi một phần backup: {e}")
+            break # Dừng nếu có lỗi
+
+    logger.info(f"Sent scam data backup ({len(scam_accounts)} accounts) to {chat_id}.")
+
+
+# Hàm MỚI: Lệnh /backup (chỉ admin)
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lệnh Admin để gửi backup dữ liệu lừa đảo thủ công."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("Bạn không có quyền sử dụng lệnh này.")
+        return
+    
+    await update.message.reply_text("Đang tạo và gửi backup dữ liệu...")
+    await send_scam_data_backup(user_id, context) # Gửi backup đến Admin
+
+
+# Hàm MỚI: Job để gửi backup tự động
+async def scheduled_backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Job được lên lịch để gửi backup dữ liệu tự động đến Admin."""
+    logger.info(f"Running scheduled backup job for ADMIN_USER_ID: {ADMIN_USER_ID}")
+    await send_scam_data_backup(ADMIN_USER_ID, context)
+
 # Hàm chính để chạy bot
 def main() -> None:
     """Chạy bot."""
     application = Application.builder().token(TOKEN).build()
 
-    # Đăng ký các handler
+    # --- Đăng ký các handler ---
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("add", add_scam_account))
     application.add_handler(CommandHandler("delete", delete_scam_account))
     application.add_handler(CommandHandler("baocao", report_scam_account))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("backup", backup_command)) # Đăng ký lệnh backup mới
     
     # Handler cho các nút inline (CallbackQuery)
     application.add_handler(CallbackQueryHandler(handle_callback_query))
 
     # Đăng ký handler cho sự kiện thành viên nhóm (thêm hoặc xóa thành viên)
-    # ChatMemberHandler.CHAT_MEMBER: Bắt sự kiện thay đổi trạng thái thành viên trong nhóm
     application.add_handler(ChatMemberHandler(greet_new_member, ChatMemberHandler.CHAT_MEMBER))
 
     # Handler cho tin nhắn TEXT không phải lệnh
-    # Sử dụng filters.TEXT & ~filters.COMMAND để đảm bảo chỉ xử lý tin nhắn là văn bản
-    # và không phải là một lệnh bot
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_scam_account_message))
+
+    # --- Lên lịch gửi backup tự động ---
+    job_queue = application.job_queue
+
+    # Lên lịch gửi backup lúc 12h trưa (12:00) và 1h sáng (01:00) hàng ngày
+    # Đặt múi giờ cho phù hợp với Việt Nam (GMT+7)
+    # job_queue.run_daily sẽ chạy job vào một thời điểm cụ thể mỗi ngày.
+    # time=datetime.time(hour=12, minute=0, tzinfo=datetime.timezone(datetime.timedelta(hours=7)))
+    # Sử dụng datetime.time.fromisoformat('12:00:00+07:00') nếu cần
+
+    # Để đơn giản, chúng ta sẽ không đặt tzinfo trực tiếp vào datetime.time() ở đây
+    # và giả định môi trường chạy bot có múi giờ được cấu hình tương ứng
+    # hoặc bạn có thể điều chỉnh giờ nếu bot chạy ở múi giờ khác.
+    # Tuy nhiên, cách an toàn nhất là sử dụng thư viện pytz để định nghĩa múi giờ rõ ràng
+    # Nhưng để giữ code đơn giản và tránh thêm dependency, ta sẽ đặt giờ trực tiếp
+    
+    # Backup lúc 12:00 trưa
+    job_queue.run_daily(
+        scheduled_backup_job,
+        time=datetime.time(hour=12, minute=0, second=0),
+        name="Daily Backup 12 PM"
+    )
+    # Backup lúc 1:00 sáng
+    job_queue.run_daily(
+        scheduled_backup_job,
+        time=datetime.time(hour=1, minute=0, second=0),
+        name="Daily Backup 1 AM"
+    )
 
     logger.info("Bot đang chạy...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
+    # Thêm import asyncio nếu bạn dùng asyncio.sleep trong chunk_message
+    try:
+        import asyncio
+    except ImportError:
+        pass # asyncio đã là built-in từ Python 3.4
     main()
 
