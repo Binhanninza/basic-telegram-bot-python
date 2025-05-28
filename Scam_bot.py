@@ -4,14 +4,19 @@ import logging
 import sqlite3
 import os
 import datetime
-import math # Thêm thư viện math để dùng cho việc chia nhỏ tin nhắn
+import math
+import asyncio # Thêm thư viện asyncio cho các hàm async
+
+# Thêm các import cần thiết cho Flask
+from flask import Flask, request, jsonify
+import threading
 
 # --- CẤU HÌNH CỦA BẠN ---
 # NHỚ THAY THẾ "YOUR_BOT_TOKEN_HERE" BẰNG TOKEN BOT CỦA BẠN!
 TOKEN = "7725842212:AAHgtkLAQOztjhdvnmQWvHe4Pcsq-z5CovA" 
 # NHỚ THAY THẾ "123456789" BẰNG ID TELEGRAM CỦA ADMIN!
 ADMIN_USER_ID = 5835093566 
-# --- KẾT THÚC CẤU HÌNH ---
+# --- KẾT THÚC CẤU HẾNH ---
 
 # Cấu hình logging để xem các thông báo lỗi và hoạt động của bot
 logging.basicConfig(
@@ -24,6 +29,31 @@ logger = logging.getLogger(__name__)
 DB_FILE = 'scam_accounts.db'
 # Tên file JSON cũ (chỉ cần nếu bạn có file JSON cũ và muốn import, nếu không có thì không sao)
 OLD_SCAM_JSON_FILE = 'scam_accounts_old.json' 
+
+# --- Khởi tạo ứng dụng Flask và cấu hình Web Server ---
+app = Flask(__name__)
+
+# Định nghĩa cổng mà Flask sẽ lắng nghe
+# Render sẽ cung cấp một biến môi trường PORT, nếu không có thì dùng 5000
+PORT = int(os.environ.get("PORT", 5000))
+
+@app.route('/')
+def home():
+    """Trang chủ đơn giản cho Web Service."""
+    return "Bot is running!", 200
+
+@app.route('/health')
+def health_check():
+    """Endpoint kiểm tra sức khỏe của bot."""
+    return jsonify({"status": "healthy"}), 200
+
+def run_flask_app():
+    """Chạy ứng dụng Flask."""
+    # use_reloader=False để tránh Flask chạy app hai lần
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+
+# --- Kết thúc phần Flask Web Server ---
+
 
 # --- Hàm hỗ trợ kết nối và thao tác với SQLite ---
 
@@ -457,7 +487,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode='Markdown'
             )
         except Exception as e:
-            logger.warning(f"Không thể gửi thông báo từ chối tới user {reporter_user_id}: {e}")
+                logger.warning(f"Không thể gửi thông báo từ chối tới user {reporter_user_id}: {e}")
 
 async def check_scam_account_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Xử lý tin nhắn của người dùng để kiểm tra số tài khoản."""
@@ -558,13 +588,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "  Ví dụ: `/add 012345 Scam bán acc` hoặc `/add 987654 11223344`\n"
         "• `/delete {STK}`: Xóa số tài khoản lừa đảo ra khỏi dữ liệu.\n"
         "  Ví dụ: `/delete 012345`\n"
-        "• `/backup`: Gửi toàn bộ danh sách tài khoản lừa đảo.\n\n" # Thêm mô tả lệnh backup
+        "• `/backup`: Gửi toàn bộ danh sách tài khoản lừa đảo.\n\n"
         "**Lệnh của Người dùng:**\n"
         "• Gửi trực tiếp **số tài khoản** bạn muốn kiểm tra.\n"
         "• `/baocao {STK} {Lý do}`: Báo cáo một số tài khoản lừa đảo. **Lý do là bắt buộc.**\n"
         "  Ví dụ: `/baocao 1234567890 Kẻ lừa đảo bán hàng giả`\n"
         "• `/help`: Hiển thị hướng dẫn sử dụng này."
-        , parse_mode='Markdown' # Đảm bảo parse_mode là Markdown
+        , parse_mode='Markdown'
     )
 
 # Hàm MỚI: Chia nhỏ tin nhắn nếu quá dài
@@ -597,10 +627,6 @@ async def send_scam_data_backup(chat_id: int, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(chat_id=chat_id, text="Không có tài khoản lừa đảo nào trong dữ liệu.")
         logger.info(f"Sent empty scam data backup to {chat_id}")
         return
-
-    # Sắp xếp theo thứ tự thêm vào (mới nhất trước) để dễ xem
-    # scam_accounts_sorted = sorted(scam_accounts, key=lambda x: x[2] if x[2] else '', reverse=True)
-    # Vì đã ORDER BY account_number trong get_all_scam_accounts_from_db nên không cần sắp xếp lại
 
     header = "📊 **DANH SÁCH TÀI KHOẢN LỪA ĐẢO** 📊\n\n"
     footer = f"\n\nTổng cộng: {len(scam_accounts)} tài khoản."
@@ -687,24 +713,11 @@ def main() -> None:
     job_queue = application.job_queue
 
     # Lên lịch gửi backup lúc 12h trưa (12:00) và 1h sáng (01:00) hàng ngày
-    # Đặt múi giờ cho phù hợp với Việt Nam (GMT+7)
-    # job_queue.run_daily sẽ chạy job vào một thời điểm cụ thể mỗi ngày.
-    # time=datetime.time(hour=12, minute=0, tzinfo=datetime.timezone(datetime.timedelta(hours=7)))
-    # Sử dụng datetime.time.fromisoformat('12:00:00+07:00') nếu cần
-
-    # Để đơn giản, chúng ta sẽ không đặt tzinfo trực tiếp vào datetime.time() ở đây
-    # và giả định môi trường chạy bot có múi giờ được cấu hình tương ứng
-    # hoặc bạn có thể điều chỉnh giờ nếu bot chạy ở múi giờ khác.
-    # Tuy nhiên, cách an toàn nhất là sử dụng thư viện pytz để định nghĩa múi giờ rõ ràng
-    # Nhưng để giữ code đơn giản và tránh thêm dependency, ta sẽ đặt giờ trực tiếp
-    
-    # Backup lúc 12:00 trưa
     job_queue.run_daily(
         scheduled_backup_job,
         time=datetime.time(hour=12, minute=0, second=0),
         name="Daily Backup 12 PM"
     )
-    # Backup lúc 1:00 sáng
     job_queue.run_daily(
         scheduled_backup_job,
         time=datetime.time(hour=1, minute=0, second=0),
@@ -712,13 +725,14 @@ def main() -> None:
     )
 
     logger.info("Bot đang chạy...")
+    
+    # Chạy Flask app trong một luồng riêng biệt
+    flask_thread = threading.Thread(target=run_flask_app)
+    flask_thread.start() # Khởi động luồng Flask
+    
+    # Chạy Telegram bot trong luồng chính
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    # Thêm import asyncio nếu bạn dùng asyncio.sleep trong chunk_message
-    try:
-        import asyncio
-    except ImportError:
-        pass # asyncio đã là built-in từ Python 3.4
     main()
 
