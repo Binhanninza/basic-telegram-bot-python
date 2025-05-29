@@ -566,10 +566,10 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Tạo tin nhắn chào mừng
         welcome_message = (
             f"𝗪𝗲𝗹𝗰𝗼𝗺𝗲 𝗰𝗼𝗻 𝘃𝗸 {member_name} đ𝗮̃ đ𝗲̂́𝗻 👉🏻 𝘃𝗼̛́𝗶 𝗻𝗵𝗼́𝗺 𝗖𝗦𝗖𝗦𝟭\n"
-            f"𝑭𝒓𝒊𝒆𝒏𝒅 𝒍𝗮̀ 𝒕𝒉𝒂̀𝒏𝒉 𝒗𝒊𝒆̂𝒏 𝒔𝒐̂́ {chat_member_count} của cộng đồng này. \n"
+            f"𝑭𝒓𝒊𝒆𝒏𝒅 𝒍𝗮̀ 𝒕𝒉𝒂̀𝒏𝒉 𝒗𝒊𝒆̂𝗻 𝒔𝒐̂́ {chat_member_count} của cộng đồng này. \n"
             f"𝚃ê𝚗: {member_name}\n"
-            f"𝚃𝚑ờ𝚒 𝚐𝚒𝚊𝚗 𝚝𝚑𝗮𝗺 𝚐𝗶𝗮: {formatted_join_time}\n"
-            f"𝘾h𝒖́𝙘 𝙘𝙤𝙣 𝙫𝙠 𝙣h𝒂̆́𝙣 𝙩𝙞𝙣 𝙫𝙪𝙞 𝙫𝒆̉, 𝙣h𝒐̛́ 𝙩𝙪𝐚̂𝙣 /𝙧𝙪𝒍𝒆𝒔 𝙘𝒖̉𝗮 𝙣h𝒐́𝙢 𝙣h𝒆́!!!"
+            f"𝚃𝚑ờ𝚒 𝚐𝚒𝚊𝗻 𝚝𝚑𝗮𝗺 𝚐𝗶𝗮: {formatted_join_time}\n"
+            f"𝘾h𝒖́𝙘 𝙘𝙤𝗻 𝙫𝙠 𝙣h𝒂̆́𝙣 𝙩𝙞𝙣 𝙫𝙪𝙞 𝙫𝒆̉, 𝙣h𝒐̛́ 𝙩𝙪𝐚̂𝗻 /𝙧𝙪𝒍𝒆𝒔 𝙘𝒖̉𝗮 𝙣h𝒐́𝗺 𝙣h𝒆́!!!"
         )
 
         # Gửi tin nhắn chào mừng vào nhóm
@@ -597,28 +597,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         , parse_mode='Markdown'
     )
 
-# Hàm MỚI: Chia nhỏ tin nhắn nếu quá dài
-def chunk_message(text: str, max_length: int = 4096) -> list[str]:
-    """Chia một chuỗi văn bản thành các đoạn nhỏ hơn không vượt quá max_length."""
-    chunks = []
-    current_chunk = ""
-    # Tách theo dòng để tránh cắt ngang thông tin quan trọng
-    lines = text.split('\n') 
-    
-    for line in lines:
-        # Nếu thêm dòng này vào mà vượt quá max_length
-        if len(current_chunk) + len(line) + 1 > max_length and current_chunk: # +1 cho ký tự xuống dòng
-            chunks.append(current_chunk.strip())
-            current_chunk = line + '\n'
-        else:
-            current_chunk += line + '\n'
-            
-    if current_chunk: # Thêm phần còn lại nếu có
-        chunks.append(current_chunk.strip())
-    
-    return chunks
-
-# Hàm MỚI: Gửi backup dữ liệu scam
+# Hàm MỚI: Gửi backup dữ liệu scam (đã cập nhật định dạng)
 async def send_scam_data_backup(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lấy dữ liệu scam và gửi tới chat_id được chỉ định, chia nhỏ nếu cần."""
     scam_accounts = get_all_scam_accounts_from_db()
@@ -628,35 +607,57 @@ async def send_scam_data_backup(chat_id: int, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Sent empty scam data backup to {chat_id}")
         return
 
-    header = "📊 **DANH SÁCH TÀI KHOẢN LỪA ĐẢO** 📊\n\n"
-    footer = f"\n\nTổng cộng: {len(scam_accounts)} tài khoản."
+    # Lấy chỉ các số tài khoản
+    account_numbers_only = [account for account, _, _ in scam_accounts]
+
+    # Nối các số tài khoản thành một chuỗi, cách nhau bằng dấu cách
+    accounts_string = " ".join(account_numbers_only)
+
+    header = "List tài khoản hiện có:\n"
+    footer = f"\nTổng số: {len(scam_accounts)}"
     
-    all_data_lines = []
-    for account, reason, added_at_iso in scam_accounts:
-        added_info = ""
-        if added_at_iso:
-            try:
-                added_datetime = datetime.datetime.fromisoformat(added_at_iso)
-                added_info = f" (thêm: {added_datetime.strftime('%d-%m-%Y')})"
-            except (ValueError, TypeError):
-                added_info = f" (thêm: {added_at_iso})" # Fallback nếu lỗi format
-
-        if reason:
-            all_data_lines.append(f"• `{account}`: {reason}{added_info}")
-        else:
-            all_data_lines.append(f"• `{account}`{added_info}")
-
-    full_message_content = header + "\n".join(all_data_lines) + footer
+    # Tạo nội dung tin nhắn đầy đủ
+    full_message_content = header + accounts_string + footer
 
     # Chia nhỏ tin nhắn nếu vượt quá giới hạn Telegram (4096 ký tự)
-    message_chunks = chunk_message(full_message_content)
+    # Cần thêm khoảng đệm cho header/footer và dấu cách giữa các số
+    # Ước tính số ký tự tối đa cho phần chuỗi tài khoản trong một chunk
+    MAX_ACCOUNT_STRING_LENGTH_PER_CHUNK = 4096 - len(header) - len(footer) - 100 # Trừ thêm 100 ký tự dự phòng cho an toàn
+
+    message_chunks = []
+    
+    if len(accounts_string) > MAX_ACCOUNT_STRING_LENGTH_PER_CHUNK:
+        # Nếu chuỗi tài khoản quá dài, chia nhỏ nó
+        current_chunk_accounts = []
+        current_chunk_length = 0
+
+        for account in account_numbers_only:
+            # Ước tính độ dài của tài khoản + dấu cách
+            account_len_with_space = len(account) + 1 
+
+            if current_chunk_length + account_len_with_space > MAX_ACCOUNT_STRING_LENGTH_PER_CHUNK:
+                # Nếu thêm tài khoản này vượt quá giới hạn, đóng chunk hiện tại
+                message_chunks.append(header + " ".join(current_chunk_accounts) + footer)
+                current_chunk_accounts = [account]
+                current_chunk_length = account_len_with_space
+            else:
+                current_chunk_accounts.append(account)
+                current_chunk_length += account_len_with_space
+        
+        # Thêm chunk cuối cùng nếu còn tài khoản trong current_chunk_accounts
+        if current_chunk_accounts:
+            message_chunks.append(header + " ".join(current_chunk_accounts) + footer)
+    else:
+        # Nếu chuỗi tài khoản không quá dài, gửi một tin nhắn duy nhất
+        message_chunks.append(full_message_content)
+
 
     for i, chunk in enumerate(message_chunks):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
-                parse_mode='Markdown'
+                parse_mode='Markdown' # Giữ Markdown nếu bạn có ý định dùng nó ở đâu đó khác
             )
             # Thêm độ trễ nhỏ giữa các tin nhắn nếu có nhiều chunk để tránh giới hạn rate
             if len(message_chunks) > 1 and i < len(message_chunks) - 1:
@@ -724,7 +725,7 @@ def main() -> None:
         name="Daily Backup 1 AM"
     )
 
-    logger.info("Bot đang chạy...")
+    logger.info("Bot đang chạy:)...")
     
     # Chạy Flask app trong một luồng riêng biệt
     flask_thread = threading.Thread(target=run_flask_app)
